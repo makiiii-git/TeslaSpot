@@ -1,0 +1,83 @@
+name: リリース
+
+# v で始まるタグを push すると、署名済み APK をビルドして GitHub Releases に添付する。
+#
+#   git tag v0.1.0 && git push origin v0.1.0
+#
+# 署名鍵は Secrets から取り出す（リポジトリには置かない）。
+#   ANDROID_KEYSTORE_BASE64  release.jks を base64 にしたもの
+#   ANDROID_KEYSTORE_PASSWORD
+#   ANDROID_KEY_ALIAS
+#   ANDROID_KEY_PASSWORD
+#
+# 鍵が無いと、未署名や毎回違う鍵の APK になり「上書きインストール」ができなくなる。
+# そのため、鍵が無いときはリリースせずに止める。
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: 署名鍵を取り出す
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            echo "::error::Secrets に ANDROID_KEYSTORE_BASE64 がありません（README の「リリースのしかた」を参照）"
+            exit 1
+          fi
+          echo "$KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+
+      - name: バージョンを読む
+        id: ver
+        run: |
+          NAME=$(grep -o 'versionName = "[^"]*"' app/build.gradle.kts | head -1 | sed 's/.*"\(.*\)"/\1/')
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ] && [ "${GITHUB_REF_NAME}" != "v$NAME" ]; then
+            echo "::error::タグ ${GITHUB_REF_NAME} と versionName v$NAME が一致しません"
+            exit 1
+          fi
+
+      - name: APK をビルド
+        env:
+          TESLASPOT_STORE_FILE: ${{ runner.temp }}/release.jks
+          TESLASPOT_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          TESLASPOT_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          TESLASPOT_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          ./gradlew assembleRelease --console=plain
+          OUT=app/build/outputs/apk/release/app-release.apk
+          test -f "$OUT" || { echo "::error::署名済み APK ができませんでした"; exit 1; }
+          cp "$OUT" "TeslaSpot-v${{ steps.ver.outputs.name }}.apk"
+          sha256sum "TeslaSpot-v${{ steps.ver.outputs.name }}.apk" | tee SHA256SUMS.txt
+
+      - name: リリースを作る
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="v${{ steps.ver.outputs.name }}"
+          APK="TeslaSpot-v${{ steps.ver.outputs.name }}.apk"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$APK" SHA256SUMS.txt --clobber
+          else
+            gh release create "$TAG" "$APK" SHA256SUMS.txt \
+              --title "TeslaSpot $TAG" \
+              --notes "インストール手順は README を参照してください。"
+          fi

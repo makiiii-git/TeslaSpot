@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">TeslaSpot</string>
+    <string name="a11y_label">TeslaSpot（アクセス ポイント自動 ON）</string>
+    <string name="a11y_description">登録した車と Bluetooth でつながり、画面のロックが解除されたときに、設定アプリを開いて Wi-Fi アクセス ポイントのスイッチを ON にします。読み取るのは「設定」と「クイック設定」の画面だけで、内容を保存したり外部に送信したりすることはありません。</string>
+</resources>
