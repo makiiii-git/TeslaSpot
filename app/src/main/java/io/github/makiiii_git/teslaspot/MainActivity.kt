@@ -406,19 +406,18 @@ class MainActivity : Activity() {
 
     private fun onUpdateButton() {
         when (val s = updateState) {
-            is Updater.State.Available -> {
-                // 初回だけ「この提供元のアプリを許可」が要る
-                if (!packageManager.canRequestPackageInstalls()) {
-                    toast("「この提供元のアプリを許可」を ON にして、戻ってからもう一度押してください")
-                    startActivity(
-                        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.fromParts("package", packageName, null)),
-                    )
-                    return
-                }
-                Updater.downloadAndInstall(this, s.release, ::onUpdateState)
-            }
-            is Updater.State.Downloading, Updater.State.Checking -> Unit
+            // ダウンロードとインストールはブラウザと Android のインストーラーに任せる
+            is Updater.State.Available -> openReleasePage(s.release.pageUrl)
+            Updater.State.Checking -> Unit
             else -> Updater.check(this, ::onUpdateState)
+        }
+    }
+
+    private fun openReleasePage(url: String) {
+        try {
+            startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+        } catch (_: Exception) {
+            toast("ブラウザを開けませんでした")
         }
     }
 
@@ -426,7 +425,7 @@ class MainActivity : Activity() {
         updateState = state
         if (isDestroyed) return
         val current = "現在のバージョン: v${Updater.currentVersion}"
-        updateButton.isEnabled = state !is Updater.State.Checking && state !is Updater.State.Downloading
+        updateButton.isEnabled = state !is Updater.State.Checking
         when (state) {
             Updater.State.Checking -> {
                 updateText.text = "$current\n確認しています…"
@@ -438,17 +437,10 @@ class MainActivity : Activity() {
             }
             is Updater.State.Available -> {
                 val notes = state.release.notes.trim().take(300)
-                updateText.text = "$current\n新しいバージョン v${state.release.version} があります" +
+                updateText.text = "$current\n新しいバージョン v${state.release.version} があります。" +
+                    "ブラウザで APK をダウンロードして開くと、上書きでインストールできます" +
                     if (notes.isNotEmpty()) "\n\n$notes" else ""
-                updateButton.text = "v${state.release.version} にアップデート"
-            }
-            is Updater.State.Downloading -> {
-                updateText.text = "$current\nダウンロード中… ${state.percent}%"
-                updateButton.text = "ダウンロード中 ${state.percent}%"
-            }
-            Updater.State.WaitingForUser -> {
-                updateText.text = "$current\n確認画面で「更新」を押してください。更新が終わるとアプリが閉じます"
-                updateButton.text = "もう一度確認"
+                updateButton.text = "v${state.release.version} のダウンロードページを開く"
             }
             is Updater.State.Failed -> {
                 updateText.text = "$current\n${state.message}"

@@ -1,13 +1,10 @@
 package io.github.makiiii_git.teslaspot
 
 import android.accessibilityservice.AccessibilityService
-import android.accessibilityservice.GestureDescription
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.graphics.Path
-import android.graphics.Rect
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -202,17 +199,16 @@ class HotspotFlow(
             .firstOrNull(predicate)
     }
 
-    /** まずはふつうにクリックし、効かない部品なら画面上の位置をタップする。 */
+    /**
+     * 部品をクリックする。画面の座標をタップする操作（ジェスチャー）は使わない。
+     * 他のアプリを座標で操作できる権限はマルウェアと似た形になるため、持たないようにしている。
+     * クリックできなかったときは、押した回数の上限と確認の待ち時間で失敗扱いになる。
+     */
     private fun click(node: AccessibilityNodeInfo) {
         val target = UiMatcher.clickableSelfOrAncestor(node) ?: node
-        if (target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) return
-        val r = Rect().also { node.getBoundsInScreen(it) }
-        if (r.isEmpty) return
-        val path = Path().apply { moveTo(r.exactCenterX(), r.exactCenterY()) }
-        val gesture = GestureDescription.Builder()
-            .addStroke(GestureDescription.StrokeDescription(path, 0, 60))
-            .build()
-        service.dispatchGesture(gesture, null, null)
+        if (!target.performAction(AccessibilityNodeInfo.ACTION_CLICK)) {
+            prefs.log("スイッチをクリックできませんでした")
+        }
     }
 
     companion object {
