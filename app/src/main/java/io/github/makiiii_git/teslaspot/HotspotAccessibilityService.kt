@@ -50,8 +50,23 @@ class HotspotAccessibilityService : AccessibilityService() {
         }
     }
 
+    private var receiverRegistered = false
+
     override fun onServiceConnected() {
         instance = this
+        refreshReceivers()
+        Prefs(this).log("ユーザー補助サービスが起動しました")
+        // 車につながったまま再起動・再有効化された場合に備える
+        Coordinator.tryRun(this, "サービス起動")
+    }
+
+    /**
+     * 受け取るブロードキャストを登録し直す。
+     * Bluetooth の接続イベントは「付近のデバイス」の許可があるときだけ受け取れるので、
+     * 許可が出たあとや車を登録し直したあとに呼ぶ。
+     */
+    fun refreshReceivers() {
+        if (receiverRegistered) runCatching { unregisterReceiver(receiver) }
         val filter = IntentFilter().apply {
             addAction(Intent.ACTION_USER_PRESENT)
             addAction(Intent.ACTION_SCREEN_ON)
@@ -61,16 +76,15 @@ class HotspotAccessibilityService : AccessibilityService() {
             }
         }
         registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-        Prefs(this).log("ユーザー補助サービスが起動しました")
-        // 車につながったまま再起動・再有効化された場合に備える
-        Coordinator.tryRun(this, "サービス起動")
+        receiverRegistered = true
     }
 
     override fun onDestroy() {
         instance = null
         flow?.cancel()
         flow = null
-        runCatching { unregisterReceiver(receiver) }
+        if (receiverRegistered) runCatching { unregisterReceiver(receiver) }
+        receiverRegistered = false
         super.onDestroy()
     }
 

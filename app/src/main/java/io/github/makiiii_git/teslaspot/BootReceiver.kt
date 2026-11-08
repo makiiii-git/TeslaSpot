@@ -11,8 +11,12 @@ import android.content.Intent
  */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
-        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         val prefs = Prefs(context)
+        if (intent.action == Intent.ACTION_MY_PACKAGE_REPLACED) {
+            prefs.log("v${BuildConfig.VERSION_NAME} に更新しました")
+            return
+        }
+        if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
         prefs.carPresent = false
         prefs.doneThisConnection = false
     }

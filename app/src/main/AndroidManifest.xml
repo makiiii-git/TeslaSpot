@@ -5,10 +5,13 @@
     <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
     <!-- 「ロック解除を待っています」「失敗しました」の通知 -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 任意: 許可すると Bluetooth の接続イベントでも検知する（予備の検知経路） -->
+    <!-- ペアリング済みの機器の一覧を出す・Bluetooth の接続イベントで車を検知する -->
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <!-- 再起動時に「接続中」の記録を消すため -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <!-- アプリ内アップデート: GitHub Releases の確認とダウンロード、インストーラーへの受け渡し -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <uses-feature android:name="android.software.companion_device_setup" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />
@@ -35,6 +38,16 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
+
+        <!-- アップデートのインストール結果（確認画面の表示・失敗の記録） -->
+        <receiver
+            android:name=".Updater$InstallResultReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="io.github.makiiii_git.teslaspot.INSTALL_RESULT" />
             </intent-filter>
         </receiver>
 

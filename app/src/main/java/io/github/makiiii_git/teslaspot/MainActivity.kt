@@ -1,7 +1,12 @@
 package io.github.makiiii_git.teslaspot
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.app.Activity
+import android.app.AlertDialog
+import android.bluetooth.BluetoothClass
+import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.companion.AssociationInfo
 import android.companion.AssociationRequest
 import android.companion.BluetoothDeviceFilter
@@ -40,6 +45,7 @@ class MainActivity : Activity() {
     companion object {
         private const val REQ_ASSOCIATE = 10
         private const val REQ_PERMS = 11
+        private const val REQ_BT_FOR_REGISTER = 12
         private const val EXTRA_OPEN_HOTSPOT = "open_hotspot"
 
         fun intent(context: Context, openHotspotSettings: Boolean = false): Intent =
@@ -55,10 +61,12 @@ class MainActivity : Activity() {
     private lateinit var carButton: Button
     private lateinit var a11yButton: Button
     private lateinit var notifyButton: Button
-    private lateinit var btButton: Button
     private lateinit var enabledSwitch: Switch
     private lateinit var labelEdit: EditText
     private lateinit var logView: TextView
+    private lateinit var updateText: TextView
+    private lateinit var updateButton: Button
+    private var updateState: Updater.State? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,6 +82,9 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         refresh()
+        if (updateState == null && Updater.shouldAutoCheck(this)) {
+            Updater.check(this, ::onUpdateState)
+        }
     }
 
     private fun handleIntent(intent: Intent?) {
@@ -109,15 +120,12 @@ class MainActivity : Activity() {
         }
         column.addView(status)
 
-        carButton = button("") { if (prefs.associationId >= 0) unregisterCar() else registerCar() }
+        carButton = button("") { if (prefs.carAddress != null) unregisterCar() else registerCar() }
         a11yButton = button("2. ユーザー補助を ON にする") { openAccessibilitySettings() }
         notifyButton = button("3. 通知を許可する") {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), REQ_PERMS)
         }
-        btButton = button("（任意）接続の検知を強化する") {
-            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_PERMS)
-        }
-        listOf(carButton, a11yButton, notifyButton, btButton).forEach(column::addView)
+        listOf(carButton, a11yButton, notifyButton).forEach(column::addView)
         column.addView(button("4. 今すぐテスト（アクセス ポイントを ON）") { runTest() })
         column.addView(button("アプリ情報を開く（制限付き設定の許可）") { openAppInfo() })
 
@@ -148,6 +156,17 @@ class MainActivity : Activity() {
         })
 
         column.addView(TextView(this).apply {
+            text = "アップデート"
+            textSize = 16f
+            setTypeface(typeface, Typeface.BOLD)
+            setPadding(0, dp(16), 0, dp(4))
+        })
+        updateText = TextView(this).apply { text = "現在のバージョン: v${Updater.currentVersion}" }
+        column.addView(updateText)
+        updateButton = button("アップデートを確認") { onUpdateButton() }
+        column.addView(updateButton)
+
+        column.addView(TextView(this).apply {
             text = "ログ"
             textSize = 16f
             setTypeface(typeface, Typeface.BOLD)
@@ -173,7 +192,7 @@ class MainActivity : Activity() {
 
     private fun refresh() {
         val car = prefs.carName ?: prefs.carAddress
-        val registered = prefs.associationId >= 0
+        val registered = prefs.carAddress != null
         val a11y = isAccessibilityEnabled()
         val notify = granted(Manifest.permission.POST_NOTIFICATIONS)
         val bt = granted(Manifest.permission.BLUETOOTH_CONNECT)
@@ -182,7 +201,15 @@ class MainActivity : Activity() {
             appendLine("${mark(registered)} 車: ${if (registered) car ?: "登録済み" else "未登録"}")
             appendLine("${mark(a11y)} ユーザー補助: ${if (a11y) "ON" else "OFF"}")
             appendLine("${mark(notify)} 通知: ${if (notify) "許可済み" else "未許可"}")
-            appendLine("${if (bt) "✅" else "➖"} 予備の接続検知: ${if (bt) "ON" else "OFF（任意）"}")
+            if (registered) {
+                val how = when {
+                    prefs.associationId >= 0 && bt -> "システム通知 + Bluetooth"
+                    prefs.associationId >= 0 -> "システム通知のみ"
+                    bt -> "Bluetooth のみ"
+                    else -> "なし（「付近のデバイス」を許可してください）"
+                }
+                appendLine("${mark(prefs.associationId >= 0 || bt)} 接続の検知: $how")
+            }
             append("いまの状態: ")
             append(
                 when {
@@ -196,20 +223,76 @@ class MainActivity : Activity() {
         carButton.text = if (registered) "車の登録を解除する" else "1. 車を登録する（Bluetooth）"
         a11yButton.visibility = if (a11y) View.GONE else View.VISIBLE
         notifyButton.visibility = if (notify) View.GONE else View.VISIBLE
-        btButton.visibility = if (bt) View.GONE else View.VISIBLE
         enabledSwitch.isChecked = prefs.enabled
         if (!labelEdit.hasFocus()) labelEdit.setText(prefs.customLabel)
         logView.text = prefs.log.ifEmpty { "（まだありません）" }
     }
 
-    // ---- 車の登録（CompanionDeviceManager）---------------------------------
+    // ---- 車の登録 -------------------------------------------------------------
+    //
+    // システムの機器選択画面は「近くで見つかった機器」を探すので、ペアリング済みでも
+    // 検出可能モードでない車（Tesla など）は出てこないことがある。
+    // そこで、ペアリング済みの機器を自前の一覧で選んでもらい、選んだ機器の
+    // アドレスを指定して CompanionDeviceManager に登録する（確認ダイアログだけ出る）。
+    // システムへの登録がうまくいかない機種でも、Bluetooth の接続イベントで検知できる。
+
+    private var pendingDevice: BluetoothDevice? = null
 
     private fun registerCar() {
-        // 名前で絞らない（車の Bluetooth 名はオーナーが自由に付けられるため）。
-        // ペアリング済みの機器も一覧に出るので、そこから車を選ぶ。
+        if (!granted(Manifest.permission.BLUETOOTH_CONNECT)) {
+            toast("ペアリング済みの機器を表示するため、「付近のデバイス」を許可してください")
+            requestPermissions(arrayOf(Manifest.permission.BLUETOOTH_CONNECT), REQ_BT_FOR_REGISTER)
+            return
+        }
+        showPairedDevices()
+    }
+
+    @SuppressLint("MissingPermission") // registerCar() で許可を確認済み
+    private fun showPairedDevices() {
+        val adapter = getSystemService(BluetoothManager::class.java)?.adapter
+        if (adapter == null || !adapter.isEnabled) {
+            toast("Bluetooth を ON にしてください")
+            return
+        }
+        val devices = adapter.bondedDevices.orEmpty().sortedWith(
+            compareBy<BluetoothDevice>({ deviceRank(it) }, { it.name ?: it.address }),
+        )
+        if (devices.isEmpty()) {
+            toast("ペアリング済みの機器がありません。先に車と Bluetooth でペアリングしてください")
+            return
+        }
+        val labels = devices.map { d ->
+            val icon = when (deviceRank(d)) {
+                0 -> "🚗"
+                1 -> "🔊"
+                else -> "・"
+            }
+            "$icon ${d.name ?: "（名前なし）"}\n    ${d.address}"
+        }.toTypedArray()
+
+        AlertDialog.Builder(this)
+            .setTitle("車を選んでください（ペアリング済み）")
+            .setItems(labels) { _, which -> associate(devices[which]) }
+            .setNegativeButton("キャンセル", null)
+            .show()
+    }
+
+    /** 並び順: 0 = カーオーディオ、1 = その他のオーディオ、2 = それ以外。 */
+    @SuppressLint("MissingPermission")
+    private fun deviceRank(d: BluetoothDevice): Int {
+        val cls = d.bluetoothClass ?: return 2
+        return when {
+            cls.deviceClass == BluetoothClass.Device.AUDIO_VIDEO_CAR_AUDIO -> 0
+            cls.majorDeviceClass == BluetoothClass.Device.Major.AUDIO_VIDEO -> 1
+            else -> 2
+        }
+    }
+
+    private fun associate(device: BluetoothDevice) {
+        pendingDevice = device
         val request = AssociationRequest.Builder()
-            .addDeviceFilter(BluetoothDeviceFilter.Builder().build())
-            .setSingleDevice(false)
+            .addDeviceFilter(BluetoothDeviceFilter.Builder().setAddress(device.address).build())
+            .setSingleDevice(true)
             .build()
         cdm.associate(request, mainExecutor, object : CompanionDeviceManager.Callback() {
             override fun onAssociationPending(intentSender: IntentSender) {
@@ -221,9 +304,31 @@ class MainActivity : Activity() {
             }
 
             override fun onFailure(error: CharSequence?) {
-                toast("登録できませんでした: ${error ?: "不明なエラー"}")
+                prefs.log("システムへの登録に失敗: ${error ?: "不明"}")
+                offerBluetoothOnly(device)
             }
         })
+    }
+
+    private fun offerBluetoothOnly(device: BluetoothDevice) {
+        if (isFinishing || prefs.carAddress != null) return
+        AlertDialog.Builder(this)
+            .setTitle("システムへの登録ができませんでした")
+            .setMessage("Bluetooth の接続イベントだけで車を検知する方法で登録しますか？\n（ユーザー補助が ON なら、ふつうはこれで動きます）")
+            .setPositiveButton("登録する") { _, _ -> registerBluetoothOnly(device) }
+            .setNegativeButton("やめる", null)
+            .show()
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun registerBluetoothOnly(device: BluetoothDevice) {
+        prefs.associationId = -1
+        prefs.carAddress = device.address.uppercase()
+        prefs.carName = device.name
+        prefs.log("車を登録しました（Bluetooth 検知のみ）: ${device.name ?: device.address}")
+        HotspotAccessibilityService.instance?.refreshReceivers()
+        toast("登録しました")
+        refresh()
     }
 
     @Deprecated("Activity#onActivityResult")
@@ -235,12 +340,14 @@ class MainActivity : Activity() {
             ?.let(::onAssociated)
     }
 
+    @SuppressLint("MissingPermission")
     private fun onAssociated(info: AssociationInfo) {
         if (prefs.associationId == info.id) return
-        val address = info.deviceMacAddress?.toString()?.uppercase()
+        val address = info.deviceMacAddress?.toString()?.uppercase() ?: pendingDevice?.address?.uppercase()
         prefs.associationId = info.id
         prefs.carAddress = address
-        prefs.carName = info.displayName?.toString()
+        prefs.carName = info.displayName?.toString() ?: pendingDevice?.name
+        HotspotAccessibilityService.instance?.refreshReceivers()
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
                 cdm.startObservingDevicePresence(
@@ -253,15 +360,15 @@ class MainActivity : Activity() {
             prefs.log("車を登録しました: ${prefs.carName ?: address}")
             toast("登録しました")
         } catch (e: Exception) {
-            prefs.log("接続の監視を始められませんでした: ${e.message}")
-            toast("接続の監視を始められませんでした")
+            prefs.log("システムの接続監視を始められませんでした（Bluetooth 検知で動きます）: ${e.message}")
+            toast("登録しました（Bluetooth 検知で動きます）")
         }
         refresh()
     }
 
     private fun unregisterCar() {
         val id = prefs.associationId
-        try {
+        if (id >= 0) try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
                 cdm.stopObservingDevicePresence(
                     ObservingDevicePresenceRequest.Builder().setAssociationId(id).build(),
@@ -272,11 +379,66 @@ class MainActivity : Activity() {
             }
         } catch (_: Exception) {
         }
-        runCatching { cdm.disassociate(id) }
+        if (id >= 0) runCatching { cdm.disassociate(id) }
         prefs.clearCar()
         prefs.log("車の登録を解除しました")
         Notifier.cancel(this)
         refresh()
+    }
+
+    // ---- アップデート -----------------------------------------------------------
+
+    private fun onUpdateButton() {
+        when (val s = updateState) {
+            is Updater.State.Available -> {
+                // 初回だけ「この提供元のアプリを許可」が要る
+                if (!packageManager.canRequestPackageInstalls()) {
+                    toast("「この提供元のアプリを許可」を ON にして、戻ってからもう一度押してください")
+                    startActivity(
+                        Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.fromParts("package", packageName, null)),
+                    )
+                    return
+                }
+                Updater.downloadAndInstall(this, s.release, ::onUpdateState)
+            }
+            is Updater.State.Downloading, Updater.State.Checking -> Unit
+            else -> Updater.check(this, ::onUpdateState)
+        }
+    }
+
+    private fun onUpdateState(state: Updater.State) {
+        updateState = state
+        if (isDestroyed) return
+        val current = "現在のバージョン: v${Updater.currentVersion}"
+        updateButton.isEnabled = state !is Updater.State.Checking && state !is Updater.State.Downloading
+        when (state) {
+            Updater.State.Checking -> {
+                updateText.text = "$current\n確認しています…"
+                updateButton.text = "確認中…"
+            }
+            Updater.State.UpToDate -> {
+                updateText.text = "$current\n最新です"
+                updateButton.text = "アップデートを確認"
+            }
+            is Updater.State.Available -> {
+                val notes = state.release.notes.trim().take(300)
+                updateText.text = "$current\n新しいバージョン v${state.release.version} があります" +
+                    if (notes.isNotEmpty()) "\n\n$notes" else ""
+                updateButton.text = "v${state.release.version} にアップデート"
+            }
+            is Updater.State.Downloading -> {
+                updateText.text = "$current\nダウンロード中… ${state.percent}%"
+                updateButton.text = "ダウンロード中 ${state.percent}%"
+            }
+            Updater.State.WaitingForUser -> {
+                updateText.text = "$current\n確認画面で「更新」を押してください。更新が終わるとアプリが閉じます"
+                updateButton.text = "もう一度確認"
+            }
+            is Updater.State.Failed -> {
+                updateText.text = "$current\n${state.message}"
+                updateButton.text = "もう一度確認"
+            }
+        }
     }
 
     // ---- その他の操作 ---------------------------------------------------------
@@ -304,8 +466,11 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (permissions.contains(Manifest.permission.BLUETOOTH_CONNECT) && granted(Manifest.permission.BLUETOOTH_CONNECT)) {
-            toast("ユーザー補助を一度 OFF→ON すると、予備の検知が有効になります")
+        if (granted(Manifest.permission.BLUETOOTH_CONNECT)) {
+            HotspotAccessibilityService.instance?.refreshReceivers()
+            if (requestCode == REQ_BT_FOR_REGISTER) showPairedDevices()
+        } else if (requestCode == REQ_BT_FOR_REGISTER) {
+            toast("「付近のデバイス」の許可がないと、ペアリング済みの機器を表示できません")
         }
         refresh()
     }
