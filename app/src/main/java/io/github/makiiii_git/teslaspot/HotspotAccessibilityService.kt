@@ -95,13 +95,19 @@ class HotspotAccessibilityService : AccessibilityService() {
     override fun onInterrupt() {}
 
     /** 操作を始める。すでに動いていれば何もしない。 */
-    fun runFlow(manual: Boolean) {
+    fun runFlow(manual: Boolean, turnOn: Boolean = true) {
         handler.post {
             if (flow != null) return@post
-            Prefs(this).log(if (manual) "テスト実行を開始" else "アクセス ポイントを ON にします")
-            flow = HotspotFlow(this) { result ->
+            Prefs(this).log(
+                when {
+                    manual -> "テスト実行を開始"
+                    turnOn -> "アクセス ポイントを ON にします"
+                    else -> "アクセス ポイントを OFF にします"
+                },
+            )
+            flow = HotspotFlow(this, turnOn) { result ->
                 flow = null
-                Coordinator.onFlowFinished(this, result, manual)
+                Coordinator.onFlowFinished(this, result, manual, turnOn)
             }.also { it.start() }
         }
     }

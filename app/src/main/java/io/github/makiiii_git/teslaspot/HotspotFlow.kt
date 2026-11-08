@@ -16,20 +16,30 @@ import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
 
 /**
- * 1 回分の「アクセス ポイントを ON にする」操作。
+ * 1 回分の「アクセス ポイントを ON（または OFF）にする」操作。
  *
  *   1. 設定アプリのアクセス ポイント画面を開き、スイッチを探して押す（最大 9 秒）
  *      見つからなければ「アクセス ポイントとテザリング」などの項目を 2 段までたどる
  *   2. だめならクイック設定を開き、タイルを押す（最大 5 秒）
- *   3. 押したあと ON になったことを画面で確かめてから、元の画面に戻る
+ *   3. 押したあと目的の状態になったことを画面で確かめてから、元の画面に戻る
  *
  * 画面は 400ms ごとに読み直す（イベントだけに頼ると、取りこぼしたときに止まるため）。
  */
 class HotspotFlow(
     private val service: AccessibilityService,
+    /** true なら ON に、false なら OFF にする。 */
+    private val turnOn: Boolean,
     private val onFinished: (Result) -> Unit,
 ) {
-    enum class Result { TURNED_ON, ALREADY_ON, FAILED }
+    enum class Result {
+        /** スイッチを押して目的の状態にした */
+        CHANGED,
+        /** はじめから目的の状態だった */
+        ALREADY,
+        FAILED,
+    }
+
+    private val targetWord = if (turnOn) "ON" else "OFF"
 
     private enum class Phase { SETTINGS, QUICK_SETTINGS }
 
@@ -139,22 +149,22 @@ class HotspotFlow(
 
     /** スイッチの状態を見て、押す・確かめる・諦めるを決める。 */
     private fun handleSwitch(m: UiMatcher.Match.Switch, cleanup: () -> Unit) {
-        if (m.checked == true) {
+        if (m.checked == turnOn) {
             cleanup()
-            finish(if (clicks > 0) Result.TURNED_ON else Result.ALREADY_ON)
+            finish(if (clicks > 0) Result.CHANGED else Result.ALREADY)
             return
         }
         val sinceClick = SystemClock.uptimeMillis() - lastClickAt
         when {
             clicks == 0 || (clicks < MAX_CLICKS && sinceClick > VERIFY_MS) -> {
-                // 押す前に「OFF である」と読めているので、押せば ON になる
+                // 押す前に「目的と逆の状態」だと読めているので、押せば目的の状態になる
                 click(m.target)
                 clicks++
                 lastClickAt = SystemClock.uptimeMillis()
                 schedule(600)
             }
             sinceClick > VERIFY_MS -> {
-                prefs.log("スイッチを押しましたが ON になりませんでした")
+                prefs.log("スイッチを押しましたが $targetWord になりませんでした")
                 cleanup()
                 finish(Result.FAILED)
             }

@@ -62,6 +62,7 @@ class MainActivity : Activity() {
     private lateinit var a11yButton: Button
     private lateinit var notifyButton: Button
     private lateinit var enabledSwitch: Switch
+    private lateinit var offOnDisconnectSwitch: Switch
     private lateinit var labelEdit: EditText
     private lateinit var logView: TextView
     private lateinit var updateText: TextView
@@ -139,6 +140,20 @@ class MainActivity : Activity() {
             }
         }
         column.addView(enabledSwitch)
+
+        offOnDisconnectSwitch = Switch(this).apply {
+            text = "車から切断したら OFF にする"
+            textSize = 16f
+            setPadding(0, dp(4), 0, 0)
+            setOnCheckedChangeListener { _, checked -> prefs.turnOffOnDisconnect = checked }
+        }
+        column.addView(offOnDisconnectSwitch)
+        column.addView(TextView(this).apply {
+            text = "ロックが解除されているときだけ動きます。ロック中に切断したときは、" +
+                "つながっている機器が無くなったときの Android の自動 OFF に任せます。"
+            textSize = 13f
+            setPadding(0, 0, 0, dp(12))
+        })
 
         column.addView(TextView(this).apply {
             text = "スイッチの名前（自動で見つからない機種だけ。例: モバイルホットスポット）"
@@ -224,6 +239,7 @@ class MainActivity : Activity() {
         a11yButton.visibility = if (a11y) View.GONE else View.VISIBLE
         notifyButton.visibility = if (notify) View.GONE else View.VISIBLE
         enabledSwitch.isChecked = prefs.enabled
+        offOnDisconnectSwitch.isChecked = prefs.turnOffOnDisconnect
         if (!labelEdit.hasFocus()) labelEdit.setText(prefs.customLabel)
         logView.text = prefs.log.ifEmpty { "（まだありません）" }
     }

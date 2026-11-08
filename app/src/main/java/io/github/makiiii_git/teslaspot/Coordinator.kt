@@ -39,6 +39,22 @@ object Coordinator {
         prefs.doneThisConnection = false
         prefs.log("車から切断しました（$source）")
         Notifier.cancel(context)
+        if (prefs.enabled && prefs.turnOffOnDisconnect) turnOffAfterDisconnect(context)
+    }
+
+    /**
+     * 切断したときに OFF にする（設定で ON のときだけ）。
+     * ロック中はスイッチを押せないので何もしない。その場合は、つながっている機器が
+     * 無くなったときの Android の自動 OFF に任せる。
+     */
+    private fun turnOffAfterDisconnect(context: Context) {
+        val prefs = Prefs(context)
+        val service = HotspotAccessibilityService.instance
+        when {
+            service == null -> prefs.log("ユーザー補助が OFF のため、OFF にできません")
+            isLocked(context) -> prefs.log("ロック中のため、Android の自動 OFF に任せます")
+            else -> service.runFlow(manual = false, turnOn = false)
+        }
     }
 
     /** 条件が揃っていれば実行する。揃っていなければ何もしない（何度呼んでもよい）。 */
@@ -67,12 +83,17 @@ object Coordinator {
     }
 
     /** 自動・手動どちらの実行でも、結果はここに集める。 */
-    fun onFlowFinished(context: Context, result: HotspotFlow.Result, manual: Boolean) {
+    fun onFlowFinished(context: Context, result: HotspotFlow.Result, manual: Boolean, turnOn: Boolean) {
         val prefs = Prefs(context)
+        val word = if (turnOn) "ON" else "OFF"
         when (result) {
-            HotspotFlow.Result.TURNED_ON -> prefs.log("アクセス ポイントを ON にしました")
-            HotspotFlow.Result.ALREADY_ON -> prefs.log("アクセス ポイントはすでに ON でした")
-            HotspotFlow.Result.FAILED -> prefs.log("スイッチが見つからず、ON にできませんでした")
+            HotspotFlow.Result.CHANGED -> prefs.log("アクセス ポイントを $word にしました")
+            HotspotFlow.Result.ALREADY -> prefs.log("アクセス ポイントはすでに $word でした")
+            HotspotFlow.Result.FAILED -> prefs.log("$word にできませんでした")
+        }
+        if (!turnOn) {
+            // OFF にできなくても Android の自動 OFF があるので、通知でわずらわせない
+            return
         }
         if (result == HotspotFlow.Result.FAILED) {
             Notifier.showFailed(context)

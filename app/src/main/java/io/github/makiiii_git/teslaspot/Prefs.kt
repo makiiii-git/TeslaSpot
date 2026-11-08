@@ -27,6 +27,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("enabled", true)
         set(v) = sp.edit().putBoolean("enabled", v).apply()
 
+    /** 車から切断したとき、ロック解除中なら OFF にするか（初期値は OFF）。 */
+    var turnOffOnDisconnect: Boolean
+        get() = sp.getBoolean("turn_off_on_disconnect", false)
+        set(v) = sp.edit().putBoolean("turn_off_on_disconnect", v).apply()
+
     /** 今、車とつながっているか。 */
     var carPresent: Boolean
         get() = sp.getBoolean("car_present", false)
