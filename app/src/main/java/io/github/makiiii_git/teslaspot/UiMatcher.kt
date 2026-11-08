@@ -20,7 +20,9 @@ object UiMatcher {
     /** スイッチを押してよい表示名（完全一致）。Pixel / AOSP / Galaxy / 英語表示の主なもの。 */
     private val TOGGLE_EXACT = listOf(
         "Wi-Fi アクセス ポイントを使用",
+        "Wi-Fi アクセス ポイントを使用する", // Android 17 の Pixel
         "アクセス ポイントを使用",
+        "アクセス ポイントを使用する",
         "Wi-Fi アクセス ポイント",
         "アクセス ポイント",
         "Wi-Fi テザリング",
@@ -45,7 +47,7 @@ object UiMatcher {
         "USB", "Bluetooth", "イーサネット", "Ethernet",
         "自動", "Auto", "名", "Name", "パスワード", "Password", "セキュリティ", "Security",
         "互換", "Compat", "帯域", "Band", "速度", "Speed", "APN", "データ使用", "Data usage",
-        "インスタント", "Instant",
+        "インスタント", "Instant", "共有", "Share", "QR",
     ).map(::normalize)
 
     /** クイック設定タイルの表示名（含む）。 */
@@ -99,6 +101,8 @@ object UiMatcher {
                 val label = labelOf(node)
                 if (label in alreadyNavigated || !isNavLabel(label, custom)) continue
                 val target = clickableSelfOrAncestor(node) ?: continue
+                // スイッチを含む行は、押すと画面移動ではなく ON/OFF が切り替わってしまう
+                if (flatten(target).any { it.isCheckable }) continue
                 return Match.Navigate(target, label)
             }
         }

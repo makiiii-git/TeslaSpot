@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <!-- 登録した車（Bluetooth）の接続・切断をシステムから通知してもらう -->
     <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
@@ -11,6 +12,13 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- 新しい版があるかを GitHub Releases に確認する（ダウンロードはブラウザで行う） -->
     <uses-permission android:name="android.permission.INTERNET" />
+    <!--
+      ユーザー補助を必要なときだけ ON にする（PayPay などが、ユーザー補助が ON だと起動しないため）。
+      普通のアプリには許可されず、PC から adb で許可したときだけ使える。許可しなければ常に ON で動く。
+    -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
 
     <uses-feature android:name="android.software.companion_device_setup" android:required="true" />
     <uses-feature android:name="android.hardware.bluetooth" android:required="true" />

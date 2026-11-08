@@ -55,9 +55,15 @@ class HotspotAccessibilityService : AccessibilityService() {
     override fun onServiceConnected() {
         instance = this
         refreshReceivers()
-        Prefs(this).log("ユーザー補助サービスが起動しました")
-        // 車につながったまま再起動・再有効化された場合に備える
-        Coordinator.tryRun(this, "サービス起動")
+        val prefs = Prefs(this)
+        if (!OnDemandA11y.isActive(this)) prefs.log("ユーザー補助サービスが起動しました")
+        // 「必要なときだけ ON」で起動を待っていた操作があれば、それを始める。
+        // なければ、車につながったまま再起動・再有効化された場合に備えて条件を確かめる。
+        if (!Coordinator.onServiceReady(this)) {
+            Coordinator.tryRun(this, "サービス起動")
+            // 何も始まらなかったら、必要なときだけ ON のときは OFF に戻す
+            handler.postDelayed({ Coordinator.releaseIfIdle(this) }, 1_500)
+        }
     }
 
     /**
@@ -93,6 +99,9 @@ class HotspotAccessibilityService : AccessibilityService() {
     }
 
     override fun onInterrupt() {}
+
+    /** スイッチを操作している最中か。 */
+    val isBusy: Boolean get() = flow != null
 
     /** 操作を始める。すでに動いていれば何もしない。 */
     fun runFlow(manual: Boolean, turnOn: Boolean = true) {

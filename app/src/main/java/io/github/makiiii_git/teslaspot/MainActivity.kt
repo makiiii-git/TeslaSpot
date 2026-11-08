@@ -63,6 +63,8 @@ class MainActivity : Activity() {
     private lateinit var notifyButton: Button
     private lateinit var enabledSwitch: Switch
     private lateinit var offOnDisconnectSwitch: Switch
+    private lateinit var onDemandSwitch: Switch
+    private lateinit var onDemandText: TextView
     private lateinit var labelEdit: EditText
     private lateinit var logView: TextView
     private lateinit var updateText: TextView
@@ -82,6 +84,8 @@ class MainActivity : Activity() {
 
     override fun onResume() {
         super.onResume()
+        // 「必要なときだけ ON」に切り替えた直後など、使っていないのに ON のままなら戻す
+        Coordinator.releaseIfIdle(this)
         refresh()
         if (updateState == null && Updater.shouldAutoCheck(this)) {
             Updater.check(this, ::onUpdateState)
@@ -155,6 +159,20 @@ class MainActivity : Activity() {
             setPadding(0, 0, 0, dp(12))
         })
 
+        onDemandSwitch = Switch(this).apply {
+            text = "ユーザー補助を必要なときだけ ON にする"
+            textSize = 16f
+            setPadding(0, dp(4), 0, 0)
+            setOnCheckedChangeListener { _, checked -> onOnDemandChanged(checked) }
+        }
+        column.addView(onDemandSwitch)
+        onDemandText = TextView(this).apply {
+            textSize = 13f
+            setTextIsSelectable(true)
+            setPadding(0, 0, 0, dp(12))
+        }
+        column.addView(onDemandText)
+
         column.addView(TextView(this).apply {
             text = "スイッチの名前（自動で見つからない機種だけ。例: モバイルホットスポット）"
             setPadding(0, dp(8), 0, 0)
@@ -209,12 +227,18 @@ class MainActivity : Activity() {
         val car = prefs.carName ?: prefs.carAddress
         val registered = prefs.carAddress != null
         val a11y = isAccessibilityEnabled()
+        val canControl = OnDemandA11y.canControl(this)
+        val onDemand = OnDemandA11y.isActive(this)
         val notify = granted(Manifest.permission.POST_NOTIFICATIONS)
         val bt = granted(Manifest.permission.BLUETOOTH_CONNECT)
 
         status.text = buildString {
             appendLine("${mark(registered)} 車: ${if (registered) car ?: "登録済み" else "未登録"}")
-            appendLine("${mark(a11y)} ユーザー補助: ${if (a11y) "ON" else "OFF"}")
+            if (onDemand) {
+                appendLine("✅ ユーザー補助: 必要なときだけ ON（いまは ${if (a11y) "ON" else "OFF"}）")
+            } else {
+                appendLine("${mark(a11y)} ユーザー補助: ${if (a11y) "ON" else "OFF"}")
+            }
             appendLine("${mark(notify)} 通知: ${if (notify) "許可済み" else "未許可"}")
             if (registered) {
                 val how = when {
@@ -236,10 +260,26 @@ class MainActivity : Activity() {
             )
         }
         carButton.text = if (registered) "車の登録を解除する" else "1. 車を登録する（Bluetooth）"
-        a11yButton.visibility = if (a11y) View.GONE else View.VISIBLE
+        a11yButton.visibility = if (a11y || onDemand) View.GONE else View.VISIBLE
         notifyButton.visibility = if (notify) View.GONE else View.VISIBLE
         enabledSwitch.isChecked = prefs.enabled
         offOnDisconnectSwitch.isChecked = prefs.turnOffOnDisconnect
+        onDemandSwitch.isEnabled = canControl
+        onDemandSwitch.isChecked = onDemand
+        onDemandText.text = when {
+            !canControl ->
+                "PayPay など、ユーザー補助が ON だと起動しないアプリ向けです。" +
+                    "PC から次のコマンドで 1 回だけ許可すると使えます（README 参照）:\n" +
+                    "adb shell pm grant $packageName android.permission.WRITE_SECURE_SETTINGS"
+            onDemand ->
+                "普段はユーザー補助を OFF にしておき、アクセス ポイントを操作する数秒だけ ON にします。"
+            else ->
+                "OFF のあいだは、ユーザー補助を常に ON にしておきます。"
+        } + if (onDemand && prefs.associationId < 0) {
+            "\n⚠️ 車が「Bluetooth 検知のみ」で登録されています。この方法では接続を検知できないので、車を登録し直してください。"
+        } else {
+            ""
+        }
         if (!labelEdit.hasFocus()) labelEdit.setText(prefs.customLabel)
         logView.text = prefs.log.ifEmpty { "（まだありません）" }
     }
@@ -452,12 +492,23 @@ class MainActivity : Activity() {
     // ---- その他の操作 ---------------------------------------------------------
 
     private fun runTest() {
-        val service = HotspotAccessibilityService.instance
-        if (service == null) {
+        if (!Coordinator.request(this, turnOn = true, manual = true)) {
             toast("先にユーザー補助を ON にしてください")
-            return
         }
-        service.runFlow(manual = true)
+    }
+
+    private fun onOnDemandChanged(checked: Boolean) {
+        // refresh() で表示を合わせたときにも呼ばれるので、変わったときだけ動かす
+        if (!OnDemandA11y.canControl(this) || checked == prefs.onDemandA11y) return
+        prefs.onDemandA11y = checked
+        if (checked) {
+            prefs.log("ユーザー補助を必要なときだけ ON にします")
+            Coordinator.releaseIfIdle(this)
+        } else {
+            prefs.log("ユーザー補助を常に ON にします")
+            OnDemandA11y.enable(this)
+        }
+        refresh()
     }
 
     private fun openAccessibilitySettings() {

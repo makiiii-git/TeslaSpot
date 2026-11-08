@@ -32,6 +32,14 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("turn_off_on_disconnect", false)
         set(v) = sp.edit().putBoolean("turn_off_on_disconnect", v).apply()
 
+    /**
+     * ユーザー補助を必要なときだけ ON にするか（adb で許可したときだけ効く）。
+     * 許可すればそのまま使えるように、初期値は ON。
+     */
+    var onDemandA11y: Boolean
+        get() = sp.getBoolean("on_demand_a11y", true)
+        set(v) = sp.edit().putBoolean("on_demand_a11y", v).apply()
+
     /** 今、車とつながっているか。 */
     var carPresent: Boolean
         get() = sp.getBoolean("car_present", false)
